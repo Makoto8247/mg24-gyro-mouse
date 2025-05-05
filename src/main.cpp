@@ -1,16 +1,19 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <LSM6DS3.h>
+#include <ICM20689.h> // Gyro and accelerometer library
+#include <Adafruit_MPR121.h> // Capacitive touch library
 #include "ArduinoLowPower.h"
 
-#define READV_PIN PA3
-#define POWER_PIN PD1 // Power button pin
-#define MT_OUT_PIN1 1 // Matrix pin
-#define MT_OUT_PIN2 2 // Matrix pin 2
-#define MT_OUT_PIN3 3 // Matrix pin 3
-#define MT_IN_PIN1 4 // Matrix pin 4
-#define MT_IN_PIN2 5 // Matrix pin 5
-#define MT_IN_PIN3 6 // Matrix pin 6
+#define READV_PIN PA2
+#define POWER_PIN PD0 // Power button pin
+#define LED_PIN D1
+#define SPI_CS_PIN PD2 // Chip select pin for SPI
+#define MT_OUT_PIN1 D10 // Matrix pin
+#define MT_OUT_PIN2 D9 // Matrix pin 2
+#define MT_OUT_PIN3 D8 // Matrix pin 3
+#define MT_IN_PIN1 D7 // Matrix pin 4
+#define MT_IN_PIN2 D6 // Matrix pin 5
+#define MT_IN_PIN3 D3 // Matrix pin 6
 
 int mt_out_pins[] = {MT_OUT_PIN1, MT_OUT_PIN2, MT_OUT_PIN3};
 int mt_in_pins[] = {MT_IN_PIN1, MT_IN_PIN2, MT_IN_PIN3};
@@ -24,19 +27,8 @@ void initializeMatrixPins() {
   }
 }
 
-// Create a instance of class LSM6DS3
-LSM6DS3 myIMU(SPI_MODE, 0x6A);
-
-void setup() {
-  Serial.begin(115200);
-  while(!Serial);
-
-  pinMode(READV_PIN, INPUT);
-  pinMode(POWER_PIN, INPUT_PULLUP);
-
-  initializeMatrixPins();
-  
-}
+ICM20689 gyroIMU(SPI, SPI_CS_PIN);
+Adafruit_MPR121 touchSensor = Adafruit_MPR121();
 
 void readVoltage() {
   int sensorValue = analogRead(READV_PIN);
@@ -53,6 +45,21 @@ void startDeepSleep() {
   }
 }
 
+void setup() {
+  Serial.begin(115200);
+  while(!Serial);
+
+  pinMode(READV_PIN, INPUT);
+  pinMode(POWER_PIN, INPUT_PULLUP);
+
+  initializeMatrixPins();
+
+  gyroIMU.begin();
+  touchSensor.begin(0x5A);
+  
+}
+
 void loop() {
   readVoltage();
+  Serial.println(gyroIMU.readSensor());
 }
