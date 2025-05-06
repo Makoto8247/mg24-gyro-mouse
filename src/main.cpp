@@ -5,7 +5,7 @@
 #include "ArduinoLowPower.h"
 
 #define READV_PIN PA2
-#define POWER_PIN PD0 // Power button pin
+#define POWER_BUTTON_PIN PD0 // Power button pin
 #define LED_PIN D1
 #define SPI_CS_PIN PD2 // Chip select pin for SPI
 #define MT_OUT_PIN1 D10 // Matrix pin
@@ -39,10 +39,22 @@ void readVoltage() {
   Serial.println(" V");
 }
 
-void startDeepSleep() {
-  if (digitalRead(POWER_PIN) == LOW) {
-    LowPower.attachInterruptWakeup(POWER_PIN, NULL, CHANGE);
+bool checkForDeepSleep() {
+  if (digitalRead(POWER_BUTTON_PIN) == HIGH) {
+    return false; // Button not pressed
   }
+
+  bool setDeepSleep = false;
+  unsigned long pressStartTime = millis();
+  while (digitalRead(POWER_BUTTON_PIN) == LOW) {
+    if (millis() - pressStartTime > 3000 && !setDeepSleep) { // 3 seconds of button press
+      LowPower.attachInterruptWakeup(POWER_BUTTON_PIN, NULL, CHANGE);
+      setDeepSleep = true;
+    }
+  }
+
+  delay(10);
+  return setDeepSleep;
 }
 
 void setup() {
@@ -50,7 +62,7 @@ void setup() {
   while(!Serial);
 
   pinMode(READV_PIN, INPUT);
-  pinMode(POWER_PIN, INPUT_PULLUP);
+  pinMode(POWER_BUTTON_PIN, INPUT_PULLUP);
 
   initializeMatrixPins();
 
@@ -62,4 +74,8 @@ void setup() {
 void loop() {
   readVoltage();
   Serial.println(gyroIMU.readSensor());
+
+//  if(checkForDeepSleep()) {
+//    LowPower.deepSleep();
+//  }
 }
