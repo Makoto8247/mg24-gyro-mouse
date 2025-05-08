@@ -8,6 +8,19 @@
 #define POWER_BUTTON_PIN PD0 // Power button pin
 #define LED_PIN D1
 #define SPI_CS_PIN PD2 // Chip select pin for SPI
+/*
+ * ボタンマトリックス割り当て表
+ * 
+ * OUTx + INy の組み合わせで対応する入力を定義
+ * 
+ * ┌────────┬─────────────────┬─────────────────┬───────────────┐
+ * │        │    IN1          │    IN2          │    IN3        │
+ * ├────────┼─────────────────┼─────────────────┼───────────────┤
+ * │ OUT1   │ マウス左クリック │ キーボードJキー  │ マウス戻るボタン│
+ * │ OUT2   │ キーボードIキー  │ ENTERキー       │ キーボードKキー │
+ * │ OUT3   │ マウス右クリック │ キーボードLキー  │ マウス進むボタン│
+ * └────────┴─────────────────┴────────────────┴────────────────┘
+ */
 #define MT_OUT_PIN1 D10 // Matrix pin
 #define MT_OUT_PIN2 D9 // Matrix pin 2
 #define MT_OUT_PIN3 D8 // Matrix pin 3
