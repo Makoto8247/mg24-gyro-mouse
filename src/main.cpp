@@ -1,18 +1,23 @@
 #include <Arduino.h>
 #include <ArduinoLowPower.h>
-#include <Adafruit_MPR121.h> // Capacitive touch library
+#include <Wire.h>
+#include <Adafruit_MPR121.h> // Capacitive touch sensor library
 #include <LSM6DS3.h> // Gyro and accelerometer library
 #include "MatrixButton.h"
 
-#define READV_PIN PA2         // 電圧測定ピン
-#define POWER_BUTTON_PIN PD0  // 電源ボタン
-#define LED_PIN D1            // 電源確認LEDピン
+#define READV_PIN D2         // 電圧測定ピン
+#define POWER_BUTTON_PIN D0  // 電源ボタン
+#define LED_PIN D1           // 電源確認LEDピン
 
 #define LSM6DS3_ADDRESS 0x6A // I2C address for LSM6DS3
 #define MPR121_ADDRESS 0x5A // I2C address for MPR121
-LSM6DS3 gyroIMU((unsigned char)I2C_MODE, (unsigned char)LSM6DS3_ADDRESS);
+
+LSM6DS3 gyroIMU(I2C_MODE, LSM6DS3_ADDRESS);
 Adafruit_MPR121 touchSensor = Adafruit_MPR121();
 MatrixButton matrixButton;
+
+static uint16_t lastTouch = 0;
+static uint16_t nextTouch = 0;
 
 uint8_t readVoltage() {
   int sensorValue = analogRead(READV_PIN);
@@ -46,52 +51,74 @@ bool checkForDeepSleep() {
 
 void setup() {
   Serial.begin(115200);
-  while(!Serial);
+  while(!Serial) delay(10);
 
+  delay(50);
+
+  // I2C setup to use speed 400kHz
+  Wire.begin();
+  delay(10);
+  Wire.setClock(400000);
+  
   pinMode(READV_PIN, INPUT);
-  pinMode(POWER_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(POWER_BUTTON_PIN, INPUT);
 
   matrixButton.begin();
   
-  gyroIMU.begin();
-  touchSensor.begin(MPR121_ADDRESS);
+  while(gyroIMU.begin()) {
+    Serial.println("Initializing LSM6DS3...");
+    delay(500);
+  }
+
+  while (!touchSensor.begin(MPR121_ADDRESS)) {
+    Serial.println("Initializing MPR121...");
+    delay(500);
+  }
 
   Serial.println("Setup complete.");
 }
 
 void loop() {
-  readVoltage();
-    // マトリックスボタンをスキャン
-  matrixButton.scan();
-  
+  //readVoltage();
+  // マトリックスボタンをスキャン
+  //matrixButton.scan();
+
+  nextTouch = touchSensor.touched();
+  Serial.print("Touch: ");
+  Serial.println(nextTouch, HEX);
+
   Serial.print("Gyro AccelX: ");
   Serial.println(gyroIMU.readFloatAccelX());
+  
 
   // ジャイロセンサーの値を読み取りマウスとして使用する
-  float accelX = gyroIMU.readFloatAccelX() * 10.0f;
-  float accelY = gyroIMU.readFloatAccelY() * -10.0f;
+  //float accelX = gyroIMU.readFloatAccelX() * 10.0f;
+  //float accelY = gyroIMU.readFloatAccelY() * -10.0f;
   
   // 加速度をマウス移動量に変換
-  int8_t mouseX = 0, mouseY = 0;
+  //int8_t mouseX = 0, mouseY = 0;
   
   // X軸の処理（しきい値処理）
-  if (accelX > 10) {
-    mouseX = 10;
-  } else if (accelX < -10) {
-    mouseX = -10;
-  } else {
-    mouseX = (int8_t)accelX;
-  }
+  //if (accelX > 10) {
+  //  mouseX = 10;
+  //} else if (accelX < -10) {
+  //  mouseX = -10;
+  //} else {
+  //  mouseX = (int8_t)accelX;
+  //}
   
-  // Y軸の処理（しきい値処理）
-  if (accelY > 10) {
-    mouseY = 10;
-  } else if (accelY < -10) {
-    mouseY = -10;
-  } else {
-    mouseY = (int8_t)accelY;
-  }
+  //// Y軸の処理（しきい値処理）
+  //if (accelY > 10) {
+  //  mouseY = 10;
+  //} else if (accelY < -10) {
+  //  mouseY = -10;
+  //} else {
+  //  mouseY = (int8_t)accelY;
+  //}
   
+
+  delay(500);
+  //lastTouch = nextTouch;
 
 //  if(checkForDeepSleep()) {
 //    LowPower.deepSleep();
