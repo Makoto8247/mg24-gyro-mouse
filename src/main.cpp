@@ -4,7 +4,7 @@
 #include "MatrixButton.h"
 #include "MPR121.h" // ソフトウェアI2C版MPR121を使用
 #include "BLEConfig.h"
-#include "MouseHID.h" // マウスHIDライブラリ
+#include "MouseHID.h" // マウスHID
 
 // ピン定義
 #define READV_PIN D2         // 電圧測定ピン
@@ -34,6 +34,33 @@ static uint16_t nextTouch = 0;
 static unsigned long pressStartTime = 0;
 static bool setDeepSleep = false;
 static uint8_t batteryLevel = 0;
+
+// HID report map characteristic
+static uint8_t HIDReportMapValue[] = { 0x05, 0x01, // Usage page (Generic Desktop)
+                                      0x09, 0x02, // Usage (Mouse)
+                                      0xA1, 0x01, // Collection (Application)
+                                      0x09, 0x01, //   UsageId (Pointer)
+                                      0xA1, 0x00, //   Collection (Physical)
+                                      0x09, 0x30, //     UsageId (x)
+                                      0x09, 0x31, //     UsageId (y)
+                                      0x15, 0x80, //     LogicalMinimum(-128)
+                                      0x25, 0x7F, //     LogicalMaximum(127)
+                                      0x95, 0x02, //     ReportCount(2)
+                                      0x75, 0x08, //     ReportSize(8)
+                                      0x81, 0x06, //     Input(Data, Variable, Relative, NoWrap, Linear, PreferredState, NoNullPosition, BitField)
+                                      0x05, 0x09, //     UsagePage(Button)
+                                      0x19, 0x01, //     UsageIdMin(Button 1)
+                                      0x29, 0x03, //     UsageIdMax(Button 3)
+                                      0x15, 0x00, //     LogicalMinimum(0)
+                                      0x25, 0x01, //     LogicalMaximum(1)
+                                      0x95, 0x03, //     ReportCount(3)
+                                      0x75, 0x01, //     ReportSize(1)
+                                      0x81, 0x02, //     Input(Data, Variable, Absolute, NoWrap, Linear, PreferredState, NoNullPosition, BitField)
+                                      0x95, 0x01, //     ReportCount(1)
+                                      0x75, 0x05, //     ReportSize(5)
+                                      0x81, 0x03, //     Input(Constant, Variable, Absolute, NoWrap, Linear, PreferredState, NoNullPosition, BitField)
+                                      0xC0,       //   EndCollection()
+                                      0xC0 };     // EndCollection()
 
 /***************************** BLE 実装 ************************************/
 // BLE 設定
@@ -153,6 +180,17 @@ static void ble_initalize_gatt_db() {
   app_assert_status(sc);
 
   // HIDサービスの追加
+  uint8_t hidServiceUUID[] = {0x12, 0x18};
+  sc = sl_bt_gattdb_add_service(
+      gattdbSessionId,
+      sl_bt_gattdb_primary_service,
+      SL_BT_GATTDB_ADVERTISED_SERVICE,
+      sizeof(hidServiceUUID),
+      hidServiceUUID,
+      &service);
+  app_assert_status(sc);
+
+  // HID プロトコル
   sl_bt_uuid_16_t hid_protocol_mode_uuid = { .data = {0x4E, 0x2A}};
   const uint8_t HID_PROTOCOL_MODE_INIT_VALUE = 0x01;
   sc = sl_bt_gattdb_add_uuid16_characteristic(
@@ -170,10 +208,123 @@ static void ble_initalize_gatt_db() {
   app_assert_status(sc);
 
   // HID レポート
+  const sl_bt_uuid_16_t HIDReportReferenceDescriptorUUID = { .data = {0x08, 0x2A}};
+  const uint8_t HIDReportReferenceValue[] = { 0x00, 0x01};
+  sc = sl_bt_gattdb_add_uuid16_descriptor(
+      gattdbSessionId,
+      characteristic,
+      SL_BT_GATTDB_DESCRIPTOR_READ,
+      SL_BT_GATTDB_ENCRYPTED_READ,
+      HIDReportReferenceDescriptorUUID,
+      sl_bt_gattdb_fixed_length_value,
+      sizeof(HIDReportReferenceValue),
+      sizeof(HIDReportReferenceValue),
+      HIDReportReferenceValue,
+      &descriptor);
+  app_assert_status(sc);
 
+  // HID レポートマップ
+  const sl_bt_uuid_16_t HIDReportMapUUID = { .data = {0x4B, 0x2A}};
+  sc = sl_bt_gattdb_add_uuid16_characteristic(
+      gattdbSessionId,
+      service,
+      SL_BT_GATTDB_CHARACTERISTIC_READ,
+      SL_BT_GATTDB_ENCRYPTED_READ,
+      0,
+      HIDReportMapUUID,
+      sl_bt_gattdb_fixed_length_value,
+      sizeof(HIDReportMapValue),
+      sizeof(HIDReportMapValue),
+      HIDReportMapValue,
+      &characteristic);
+  app_assert_status(sc);
+
+  // HID レポートマップのデスクリプタ
+  const sl_bt_uuid_16_t HIDReportMapDescriptorUUID = { .data = {0x4B, 0x2A}};
+  const uint8_t HIDExternalReportReferenceValue[] = {0x00, 0x00};
+  sc = sl_bt_gattdb_add_uuid16_descriptor(
+      gattdbSessionId,
+      characteristic,
+      SL_BT_GATTDB_DESCRIPTOR_READ,
+      0,
+      HIDReportMapDescriptorUUID,
+      sl_bt_gattdb_fixed_length_value,
+      sizeof(HIDExternalReportReferenceValue),
+      sizeof(HIDExternalReportReferenceValue),
+      HIDExternalReportReferenceValue,
+      &descriptor);
+  app_assert_status(sc);
+
+  // HID 情報の追加
+  const sl_bt_uuid_16_t HIDInformationUUID = { .data = {0x4A, 0x2A}};
+  const uint8_t HIDInformationValue[] = {0x00, 0x11, 0x00, 0x02};
+  sc = sl_bt_gattdb_add_uuid16_characteristic(
+      gattdbSessionId,
+      service,
+      SL_BT_GATTDB_CHARACTERISTIC_READ,
+      0,
+      0,
+      HIDInformationUUID,
+      sl_bt_gattdb_fixed_length_value,
+      sizeof(HIDInformationValue),
+      sizeof(HIDInformationValue),
+      HIDInformationValue,
+      &characteristic);
+  app_assert_status(sc);
+
+  // HID コントロールポイント
+  const sl_bt_uuid_16_t HIDControlPointUUID = { .data = {0x4C, 0x2A}};
+  const uint8_t HIDControlPointValue[] = {0x00};
+  sc = sl_bt_gattdb_add_uuid16_characteristic(
+      gattdbSessionId,
+      service,
+      SL_BT_GATTDB_CHARACTERISTIC_WRITE_NO_RESPONSE,
+      0,
+      0,
+      HIDControlPointUUID,
+      sl_bt_gattdb_fixed_length_value,
+      sizeof(HIDControlPointValue),
+      sizeof(HIDControlPointValue),
+      HIDControlPointValue,
+      &characteristic);
+  app_assert_status(sc);
+
+  // HID サービスの開始
+  sc = sl_bt_gattdb_start_service(gattdbSessionId, service);
+  app_assert_status(sc);
+
+  // GATT DB コミット
+  sc = sl_bt_gattdb_commit(gattdbSessionId);
+  app_assert_status(sc);
 }
 
 static void ble_start_advertising() {
+  static uint8_t advertisingSetHandle = 0xFF;
+  bleInit = true;
+
+  if (bleInit) {
+    sc = sl_bt_advertiser_create_set(&advertisingSetHandle);
+    app_assert_status(sc);
+
+    sc = sl_bt_advertiser_set_timing(
+        advertisingSetHandle,
+        160,
+        160,
+        0,
+        0);
+    app_assert_status(sc);
+    bleInit = false;
+  }
+
+  sc = sl_bt_legacy_advertiser_generate_data(advertisingSetHandle, sl_bt_advertiser_general_discoverable);
+  app_assert_status(sc);
+
+  sc = sl_bt_legacy_advertiser_start(advertisingSetHandle, sl_bt_advertiser_connectable_scannable);
+  app_assert_status(sc);
+
+  Serial.println("Advertising started.");
+  Serial.print("Advertising set handle: ");
+  Serial.println(BLE_NAME);
 }
 /**************************************************************************/
 
