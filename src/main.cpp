@@ -15,13 +15,8 @@
 #define MPR121_ADDRESS 0x5A  // MPR121のI2Cアドレス
 
 LSM6DS3 gyroIMU(I2C_MODE, LSM6DS3_ADDRESS);
-//Adafruit_MPR121 touchSensor = Adafruit_MPR121(); // オリジナルライブラリをコメントアウト
 MPR121 touchSensor; // ソフトウェアI2C版MPR121
 MatrixButton matrixButton;
-
-// HIDマウスオブジェクト
-static mouse_data mouseData;
-static mouse_accel_data mouseAccelData;
 
 // HID レポート
 static uint8_t reportArray[] = {0x00, 0x00, 0x00};
@@ -34,6 +29,9 @@ static uint16_t nextTouch = 0;
 static unsigned long pressStartTime = 0;
 static bool setDeepSleep = false;
 static uint8_t batteryLevel = 0;
+
+// HIDマウスオブジェクト
+MouseHID mouseHID(reportArray);
 
 // HID report map characteristic
 static uint8_t HIDReportMapValue[] = { 0x05, 0x01, // Usage page (Generic Desktop)
@@ -68,6 +66,7 @@ static bd_addr bleAddress = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 static uint8_t advertisingSetHandle = 0xFF;
 static sl_status_t sc = SL_STATUS_OK;
 static bool bleInit = false;
+
 
 static void ble_initalize_gatt_db() {
   uint16_t gattdbSessionId;
@@ -144,7 +143,7 @@ static void ble_initalize_gatt_db() {
   app_assert_status(sc);
 
   // キャラクタデスクリプタの追加
-  sl_bt_uuid_16_t charaPresentationFormatDescriptorUUID = { .data = {0x02, 0x29}};
+  sl_bt_uuid_16_t charaPresentationFormatDescriptorUUID = { .data = {0x04, 0x29}};
   const uint8_t charaPresentationFormatValue[] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00};
   sc = sl_bt_gattdb_add_uuid16_descriptor(
       gattdbSessionId,
@@ -207,6 +206,23 @@ static void ble_initalize_gatt_db() {
       &characteristic);
   app_assert_status(sc);
 
+  // HID Input Report (実際のマウスデータ送信用)
+  const sl_bt_uuid_16_t HIDInputReportUUID = { .data = {0x4D, 0x2A}};
+  sc = sl_bt_gattdb_add_uuid16_characteristic(
+      gattdbSessionId,
+      service,
+      (SL_BT_GATTDB_CHARACTERISTIC_READ | SL_BT_GATTDB_CHARACTERISTIC_NOTIFY),
+      SL_BT_GATTDB_ENCRYPTED_READ,
+      0,
+      HIDInputReportUUID,
+      sl_bt_gattdb_fixed_length_value,
+      sizeof(reportArray),
+      sizeof(reportArray),
+      reportArray,
+      &characteristic);
+  app_assert_status(sc);
+  hidReport = characteristic;
+
   // HID レポート
   const sl_bt_uuid_16_t HIDReportReferenceDescriptorUUID = { .data = {0x08, 0x2A}};
   const uint8_t HIDReportReferenceValue[] = { 0x00, 0x01};
@@ -238,6 +254,7 @@ static void ble_initalize_gatt_db() {
       HIDReportMapValue,
       &characteristic);
   app_assert_status(sc);
+  hidReport = characteristic;
 
   // HID レポートマップのデスクリプタ
   const sl_bt_uuid_16_t HIDReportMapDescriptorUUID = { .data = {0x4B, 0x2A}};
@@ -326,6 +343,54 @@ static void ble_start_advertising() {
   Serial.print("Advertising set handle: ");
   Serial.println(BLE_NAME);
 }
+sl_bt_msg_t evt;
+
+void sl_bt_on_event(sl_bt_msg_t *evt) {
+  uint8_t bleAddressType;
+  
+  switch (SL_BT_MSG_ID(evt->header)) {
+    case sl_bt_evt_system_boot_id:
+      Serial.println("BLE System Boot");
+
+      sc = sl_bt_system_get_identity_address(&bleAddress, &bleAddressType);
+      app_assert_status(sc);
+
+      // GATT DBの初期化
+      ble_initalize_gatt_db();
+      
+      // アドバタイジング開始
+      ble_start_advertising();
+      break;
+
+    case sl_bt_evt_connection_opened_id:
+      connectionHandle = evt->data.evt_connection_opened.connection;
+      Serial.print("Connection opened: ");
+      Serial.println(connectionHandle);
+      break;
+
+    case sl_bt_evt_connection_closed_id:
+      connectionHandle = SL_BT_INVALID_CONNECTION_HANDLE;
+      bondingHandle = SL_BT_INVALID_BONDING_HANDLE;
+      Serial.println("Connection closed, restarting advertising");
+      
+      // 再アドバタイジング
+      ble_start_advertising();
+      break;
+
+    case sl_bt_evt_sm_bonded_id:
+      bondingHandle = evt->data.evt_sm_bonded.bonding;
+      Serial.print("Bonding completed: ");
+      Serial.println(bondingHandle);
+      break;
+
+    case sl_bt_evt_sm_bonding_failed_id:
+      Serial.println("Bonding failed");
+      break;
+
+    default:
+      break;
+  }
+}
 /**************************************************************************/
 
 
@@ -386,12 +451,12 @@ void loop() {
   //matrixButton.scan();
 
   nextTouch = touchSensor.touched();
-  if (nextTouch != lastTouch) {
-    Serial.print("Touch: ");
-    Serial.println(nextTouch, HEX);
-    lastTouch = nextTouch;
-  }
-  delay(500);
+
+  // ジャイロセンサーから加速度を読み取る
+  float accelX = gyroIMU.readFloatAccelX() * 20.0f;
+  float accelY = gyroIMU.readFloatAccelY() * -20.0f;
+
+  mouseHID.processAcceleration(accelX, accelY);
 
   //Serial.print("Gyro AccelX: ");
   //Serial.println(gyroIMU.readFloatAccelX());
@@ -422,6 +487,11 @@ void loop() {
   //  mouseY = (int8_t)accelY;
   //}
   
+  // BLE送信
+  if (connectionHandle != SL_BT_INVALID_CONNECTION_HANDLE) {
+    // HIDレポートを送信
+    sc = sl_bt_gatt_server_notify_all(hidReport, sizeof(reportArray), reportArray);
+  }
 
   //lastTouch = nextTouch;
 
