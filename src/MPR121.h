@@ -4,6 +4,14 @@
 #include <Arduino.h>
 #include <SoftWire.h>
 
+#ifndef SDA
+#define SDA D4 // PC4
+#endif
+
+#ifndef SCL
+#define SCL D5 // PC5
+#endif
+
 // The default I2C address
 #define MPR121_I2CADDR_DEFAULT 0x5A        ///< default I2C address
 #define MPR121_TOUCH_THRESHOLD_DEFAULT 12  ///< default touch threshold value
@@ -56,6 +64,7 @@ enum {
 class MPR121 {
 public:
     MPR121();
+    ~MPR121();
     bool begin(uint8_t i2caddr = MPR121_I2CADDR_DEFAULT,
             uint8_t sda_pin = SDA, uint8_t scl_pin = SCL,
             uint8_t touch_threshold = MPR121_TOUCH_THRESHOLD_DEFAULT,

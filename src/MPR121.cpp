@@ -1,6 +1,16 @@
 #include "MPR121.h"
 
-MPR121::MPR121() {}
+MPR121::MPR121() {
+  softWire = NULL;
+  _i2caddr = 0;
+}
+
+MPR121::~MPR121() {
+  if (softWire) {
+    delete softWire;
+    softWire = NULL;
+  }
+}
 
 bool MPR121::begin(uint8_t i2caddr, uint8_t sda_pin, uint8_t scl_pin,
                    uint8_t touch_threshold, uint8_t release_threshold) {

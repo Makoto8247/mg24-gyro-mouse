@@ -345,6 +345,8 @@ static void ble_start_advertising() {
 }
 sl_bt_msg_t evt;
 
+extern "C" __attribute__((weak)) void sl_bt_on_event(sl_bt_msg_t *evt);
+
 void sl_bt_on_event(sl_bt_msg_t *evt) {
   uint8_t bleAddressType;
   
