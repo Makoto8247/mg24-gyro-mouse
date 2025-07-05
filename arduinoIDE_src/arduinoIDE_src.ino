@@ -1,10 +1,9 @@
-#include <Arduino.h>
 #include <ArduinoLowPower.h>
 #include <LSM6DS3.h> // ジャイロスコープとアクセロメータライブラリ
-#include "../arduinoIDE_src/MatrixButton.h" // マトリックスボタンライブラリ
-#include "../arduinoIDE_src/MPR121.h" // ソフトウェアI2C版MPR121を使用
-#include "../arduinoIDE_src/BLEConfig.h"
-#include "../arduinoIDE_src/MouseHID.h" // マウスHID
+#include "MatrixButton.h" // マトリックスボタンライブラリ
+#include "MPR121.h" // ソフトウェアI2C版MPR121を使用
+#include "BLEConfig.h"
+#include "MouseHID.h" // マウスHID
 
 // ピン定義
 #define READV_PIN D2         // 電圧測定ピン
@@ -22,7 +21,7 @@ MatrixButton matrixButton;
 static uint8_t reportArray[] = {0x00, 0x00, 0x00};
 static uint8_t connectionHandle = SL_BT_INVALID_CONNECTION_HANDLE;
 static uint32_t bondingHandle = SL_BT_INVALID_BONDING_HANDLE;
-static uint16_t hidReport;
+static uint16_t hidInputReport;
 
 static uint16_t lastTouch = 0;
 static uint16_t nextTouch = 0;
@@ -221,7 +220,7 @@ static void ble_initalize_gatt_db() {
       reportArray,
       &characteristic);
   app_assert_status(sc);
-  hidReport = characteristic;
+  hidInputReport = characteristic;
 
   // HID レポート
   const sl_bt_uuid_16_t HIDReportReferenceDescriptorUUID = { .data = {0x08, 0x2A}};
@@ -254,7 +253,6 @@ static void ble_initalize_gatt_db() {
       HIDReportMapValue,
       &characteristic);
   app_assert_status(sc);
-  hidReport = characteristic;
 
   // HID レポートマップのデスクリプタ
   const sl_bt_uuid_16_t HIDReportMapDescriptorUUID = { .data = {0x4B, 0x2A}};
@@ -344,9 +342,6 @@ static void ble_start_advertising() {
   Serial.println(BLE_NAME);
 }
 sl_bt_msg_t evt;
-
-extern "C" __attribute__((weak)) void sl_bt_on_event(sl_bt_msg_t *evt);
-
 void sl_bt_on_event(sl_bt_msg_t *evt) {
   uint8_t bleAddressType;
   
@@ -360,14 +355,33 @@ void sl_bt_on_event(sl_bt_msg_t *evt) {
       // GATT DBの初期化
       ble_initalize_gatt_db();
       
+      // HID input devices requires mandatory secure level and bonding
+      sc = sl_bt_sm_configure(0, sl_bt_sm_io_capability_noinputnooutput);
+      app_assert_status(sc);
+
+      // Allow bonding
+      sc = sl_bt_sm_set_bondable_mode(1);
+      app_assert_status(sc);
+      
       // アドバタイジング開始
       ble_start_advertising();
       break;
 
     case sl_bt_evt_connection_opened_id:
       connectionHandle = evt->data.evt_connection_opened.connection;
+      bondingHandle = evt->data.evt_connection_opened.bonding;
       Serial.print("Connection opened: ");
       Serial.println(connectionHandle);
+      
+      if (bondingHandle == SL_BT_INVALID_BONDING_HANDLE) {
+        Serial.println("Connection not bonded yet");
+      } else {
+        Serial.println("Connection bonded");
+      }
+
+      Serial.println("Increase security");
+      sc = sl_bt_sm_increase_security(evt->data.evt_connection_opened.connection);
+      app_assert_status(sc);
       break;
 
     case sl_bt_evt_connection_closed_id:
@@ -381,12 +395,28 @@ void sl_bt_on_event(sl_bt_msg_t *evt) {
 
     case sl_bt_evt_sm_bonded_id:
       bondingHandle = evt->data.evt_sm_bonded.bonding;
-      Serial.print("Bonding completed: ");
-      Serial.println(bondingHandle);
+      connectionHandle = evt->data.evt_sm_bonded.connection;
+      Serial.print("Bonded - handle: 0x");
+      Serial.print(evt->data.evt_sm_bonded.connection, HEX);
+      Serial.print(" - security mode: 0x");
+      Serial.println(evt->data.evt_sm_bonded.security_mode, HEX);
       break;
 
     case sl_bt_evt_sm_bonding_failed_id:
       Serial.println("Bonding failed");
+      break;
+
+    case sl_bt_evt_gatt_server_characteristic_status_id:
+      // クライアントがnotificationを有効/無効にした時
+      if (evt->data.evt_gatt_server_characteristic_status.characteristic == hidInputReport) {
+        if (evt->data.evt_gatt_server_characteristic_status.status_flags == sl_bt_gatt_server_client_config) {
+          if (evt->data.evt_gatt_server_characteristic_status.client_config_flags == sl_bt_gatt_server_notification) {
+            Serial.println("HID Input Report notifications enabled");
+          } else {
+            Serial.println("HID Input Report notifications disabled");
+          }
+        }
+      }
       break;
 
     default:
@@ -400,10 +430,6 @@ uint8_t readVoltage() {
   int sensorValue = analogRead(READV_PIN);
   float voltage = sensorValue * (3.3 / 4095.0); // Convert the ADC value to voltage (assuming 12-bit ADC and 3.3V reference)
   float voltagePercent = (voltage / 3.3) * 100; // Convert voltage to percentage
-  
-  Serial.print("Voltage: ");
-  Serial.print(voltage, 2); // Print the voltage with 2 decimal places
-  Serial.println(" V");
 
   return voltagePercent;
 }
@@ -449,56 +475,93 @@ void setup() {
 
 void loop() {
   batteryLevel = readVoltage();
-  delay(500);
   // マトリックスボタンをスキャン
   //matrixButton.scan();
 
   nextTouch = touchSensor.touched();
 
-  // ジャイロセンサーから加速度を読み取る
-  float accelX = gyroIMU.readFloatAccelX() * 20.0f;
-  float accelY = gyroIMU.readFloatAccelY() * -20.0f;
+  // 加速度センサーから値を読み取る（元のサンプルと同じ方式）
+  // 軸の向きを元のサンプルに合わせて調整
+  int32_t acc_y = (int32_t)(gyroIMU.readFloatAccelX() * 10.0f);      // X軸の値をY軸に
+  int32_t acc_x = (int32_t)(gyroIMU.readFloatAccelY() * 10.0f * -1.0f); // Y軸の値を反転してX軸に
 
-  mouseHID.processAcceleration(accelX, accelY);
-
-  //Serial.print("Gyro AccelX: ");
-  //Serial.println(gyroIMU.readFloatAccelX());
+  // 元のサンプルと同じ閾値処理
+  #define IMU_ACC_X_THRESHOLD 10
+  #define IMU_ACC_Y_THRESHOLD 10
   
-
-  // ジャイロセンサーの値を読み取りマウスとして使用する
-  //float accelX = gyroIMU.readFloatAccelX() * 10.0f;
-  //float accelY = gyroIMU.readFloatAccelY() * -10.0f;
+  float mouseX, mouseY;
   
-  // 加速度をマウス移動量に変換
-  //int8_t mouseX = 0, mouseY = 0;
-  
-  // X軸の処理（しきい値処理）
-  //if (accelX > 10) {
-  //  mouseX = 10;
-  //} else if (accelX < -10) {
-  //  mouseX = -10;
-  //} else {
-  //  mouseX = (int8_t)accelX;
-  //}
-  
-  //// Y軸の処理（しきい値処理）
-  //if (accelY > 10) {
-  //  mouseY = 10;
-  //} else if (accelY < -10) {
-  //  mouseY = -10;
-  //} else {
-  //  mouseY = (int8_t)accelY;
-  //}
-  
-  // BLE送信
-  if (connectionHandle != SL_BT_INVALID_CONNECTION_HANDLE) {
-    // HIDレポートを送信
-    sc = sl_bt_gatt_server_notify_all(hidReport, sizeof(reportArray), reportArray);
+  if (acc_x > IMU_ACC_X_THRESHOLD) {
+    mouseX = IMU_ACC_X_THRESHOLD;
+  } else if (acc_x < (-1 * IMU_ACC_X_THRESHOLD)) {
+    mouseX = (-1 * IMU_ACC_X_THRESHOLD);
+  } else {
+    mouseX = acc_x;
   }
 
-  //lastTouch = nextTouch;
+  if (acc_y > IMU_ACC_Y_THRESHOLD) {
+    mouseY = IMU_ACC_Y_THRESHOLD;
+  } else if (acc_y < (-1 * IMU_ACC_Y_THRESHOLD)) {
+    mouseY = (-1 * IMU_ACC_Y_THRESHOLD);
+  } else {
+    mouseY = acc_y;
+  }
+
+  mouseHID.processAcceleration(mouseX, mouseY);
+
+  // デバッグ情報を追加
+  Serial.print("Connection: ");
+  Serial.print(connectionHandle != SL_BT_INVALID_CONNECTION_HANDLE ? "OK" : "NO");
+  Serial.print(", Bonding: ");
+  Serial.print(bondingHandle != SL_BT_INVALID_BONDING_HANDLE ? "OK" : "NO");
+  Serial.print(", acc_x: ");
+  Serial.print(acc_x);
+  Serial.print(", acc_y: ");
+  Serial.print(acc_y);
+  Serial.print(", mouseX: ");
+  Serial.print(mouseX);
+  Serial.print(", mouseY: ");
+  Serial.print(mouseY);
+  Serial.print(", reportArray: [");
+  Serial.print((int8_t)reportArray[0]);
+  Serial.print(", ");
+  Serial.print((int8_t)reportArray[1]);
+  Serial.print(", ");
+  Serial.print(reportArray[2]);
+  Serial.println("]");
+
+  // BLE送信（元のサンプルと同じ条件：接続とボンディングが両方完了している場合のみ）
+  if (connectionHandle != SL_BT_INVALID_CONNECTION_HANDLE && bondingHandle != SL_BT_INVALID_BONDING_HANDLE) {
+    // データに変化があるか、または移動量が0でない場合のみ送信
+    if (reportArray[0] != 0 || reportArray[1] != 0 || reportArray[2] != 0) {
+      Serial.print("cursor [delta-X: ");
+      Serial.print((int8_t)reportArray[0], DEC);
+      Serial.print(" delta-Y: ");
+      Serial.print((int8_t)reportArray[1], DEC);
+      Serial.print(" ] LMB: ");
+      Serial.println(reportArray[2], HEX);
+      
+      sc = sl_bt_gatt_server_notify_all(hidInputReport, sizeof(reportArray), reportArray);
+      if (sc != SL_STATUS_OK) {
+        Serial.print("sl_bt_gatt_server_notify_all() returned with error code 0x");
+        Serial.println(sc, HEX);
+      }
+    } else {
+      Serial.println("No movement data to send");
+    }
+  } else {
+    Serial.println("Not ready to send (connection or bonding missing)");
+  }
+
+  // 少し遅延を入れてBLEスタックの負荷を軽減
+  delay(10);
 
 //  if(checkForDeepSleep()) {
 //    LowPower.deepSleep();
 //  }
 }
+
+
+#ifndef BLE_STACK_SILABS
+  #error "This example is only compatible with the Silicon Labs BLE stack. Please select 'BLE (Silabs)' in 'Tools > Protocol stack'."
+#endif

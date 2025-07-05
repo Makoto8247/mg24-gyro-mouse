@@ -3,9 +3,9 @@
 
 #include <Arduino.h>
 
-#define ACCEL_THRESHOLD 15.0f
-#define DEAD_ZONE       2.0f
-#define SENSITIVITY     1.2f
+#define ACCEL_THRESHOLD 15.0f   // 加速度閾値（元のサンプルベース）
+#define DEAD_ZONE       0.5f    // デッドゾーン（小さめに調整）
+#define SENSITIVITY     1.0f    // 感度（元のサンプルでは直接処理）
 
 #define MOUSE_LEFT_BUTTON   0x01
 #define MOUSE_RIGHT_BUTTON  0x02

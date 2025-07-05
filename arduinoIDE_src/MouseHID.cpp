@@ -15,30 +15,14 @@ MouseHID::MouseHID(uint8_t* reportArray,
 }
 
 void MouseHID::processAcceleration(float accelX, float accelY) {
-    // デッドゾーン処理
+    // 元のサンプルに近い処理：シンプルな直接代入
+    // デッドゾーン処理（微細な振動を除去）
     if (fabs(accelX) < mouseDeadZone) accelX = 0;
     if (fabs(accelY) < mouseDeadZone) accelY = 0;
 
-    // 感度調整
-    accelX *= mouseSensitivity;
-    accelY *= mouseSensitivity;
-
-    // 範囲制限
-    if (accelX > mouseThreshold) {
-        currentMouseData.delta_x = mouseThreshold; // 最大値
-    } else if (accelX < -mouseThreshold) {
-        currentMouseData.delta_x = -mouseThreshold; // 最小値
-    } else {
-        currentMouseData.delta_x = (int8_t)accelX; // 範囲内の値
-    }
-
-    if (accelY > mouseThreshold) {
-        currentMouseData.delta_y = mouseThreshold; // 最大値
-    } else if (accelY < -mouseThreshold) {
-        currentMouseData.delta_y = -mouseThreshold; // 最小値
-    } else {
-        currentMouseData.delta_y = (int8_t)accelY; // 範囲内の値
-    }
+    // 直接int8_tに変換（元のサンプルと同じ方式）
+    currentMouseData.delta_x = (int8_t)accelX;
+    currentMouseData.delta_y = (int8_t)accelY;
 
     updateReport();
 }
